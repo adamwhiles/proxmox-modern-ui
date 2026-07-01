@@ -88,14 +88,23 @@ their pinned TLS fingerprints, and the audit log.
 
 ## 6. Run it as a systemd service
 
-Copy [`deploy/proxmox-ui.service`](../deploy/proxmox-ui.service) in:
+`deploy/proxmox-ui.service` was already copied into the container as part of the repo in step 3, at
+`/opt/proxmox-ui/deploy/proxmox-ui.service` — copy it into place from inside the container (no
+`pct push` needed; that command copies from the *Proxmox host's* filesystem, and the repo only
+lives inside the container):
+
+The unit uses `ProtectSystem=strict` + `ReadWritePaths=.../data`, which requires that `data`
+directory to already exist on disk (systemd bind-mounts it as part of namespace setup *before* the
+app gets a chance to create it itself) — it's gitignored, so a fresh clone/rsync won't have it yet.
+Create it explicitly or the service fails immediately with `226/NAMESPACE`:
 
 ```
 pct exec <vmid> -- bash -c '
   useradd -r -d /opt/proxmox-ui -s /usr/sbin/nologin proxmox-ui
+  mkdir -p /opt/proxmox-ui/apps/server/data
   chown -R proxmox-ui:proxmox-ui /opt/proxmox-ui
+  cp /opt/proxmox-ui/deploy/proxmox-ui.service /etc/systemd/system/proxmox-ui.service
 '
-pct push <vmid> deploy/proxmox-ui.service /etc/systemd/system/proxmox-ui.service
 pct exec <vmid> -- bash -c '
   systemctl daemon-reload
   systemctl enable --now proxmox-ui
