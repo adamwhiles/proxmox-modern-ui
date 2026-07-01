@@ -8,9 +8,13 @@ Type=simple
 User=proxmox-ui
 WorkingDirectory=/opt/proxmox-ui/apps/server
 EnvironmentFile=/opt/proxmox-ui/apps/server/.env
-# corepack's pnpm shim location varies by install method — resolve it via a login shell rather
-# than hardcoding a path (e.g. /usr/bin/pnpm may not exist even though `pnpm` works interactively).
-ExecStart=/bin/bash -lc 'exec pnpm start'
+# Invoke tsx directly rather than `pnpm start`: corepack's pnpm shim checks the pinned
+# packageManager version against its per-user cache (~/.cache/node/corepack), and this service's
+# User= has a different $HOME than whoever ran `pnpm install`, so it tries to download and cache a
+# fresh copy at runtime — which ProtectSystem=strict then blocks, failing the whole unit. Running
+# the already-installed tsx binary directly sidesteps pnpm/corepack (and any network dependency) at
+# service start entirely.
+ExecStart=/opt/proxmox-ui/apps/server/node_modules/.bin/tsx src/index.ts
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true
