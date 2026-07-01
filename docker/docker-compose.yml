@@ -1,0 +1,23 @@
+services:
+  proxmox-ui:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      HOST: "0.0.0.0"
+      PORT: "3000"
+      # Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY}
+      COOKIE_SECRET: ${COOKIE_SECRET}
+      SETUP_TOKEN: ${SETUP_TOKEN}
+      APP_ADMIN_USERS: ${APP_ADMIN_USERS}
+      DATABASE_PATH: /app/data/app.sqlite
+    volumes:
+      - proxmox-ui-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  proxmox-ui-data:
