@@ -50,7 +50,7 @@ export default fp(async function sessionPlugin(fastify: FastifyInstance) {
     this.setCookie(SESSION_COOKIE, id, {
       path: "/",
       httpOnly: true,
-      secure: config.isProduction,
+      secure: config.tlsTerminated,
       sameSite: "strict",
       signed: true,
     });
@@ -58,7 +58,7 @@ export default fp(async function sessionPlugin(fastify: FastifyInstance) {
     this.setCookie(CSRF_COOKIE, data.csrfToken, {
       path: "/",
       httpOnly: false,
-      secure: config.isProduction,
+      secure: config.tlsTerminated,
       sameSite: "strict",
     });
     this.request.session = data;

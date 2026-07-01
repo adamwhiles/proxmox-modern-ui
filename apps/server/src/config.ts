@@ -25,6 +25,17 @@ export const config = {
   host: process.env.HOST ?? "0.0.0.0",
   port: Number(process.env.PORT ?? 3000),
 
+  /**
+   * Whether a reverse proxy in front of this process actually terminates TLS. Deliberately NOT
+   * tied to isProduction: a production deployment can validly run over plain HTTP for a while
+   * (e.g. LAN-only, no proxy set up yet), and forcing HTTPS-only behavior in that case doesn't make
+   * it more secure — it just breaks the app outright (Secure cookies silently fail to be sent, and
+   * CSP's upgrade-insecure-requests rewrites every asset request to https, which then fails with
+   * no TLS listener to answer it). Set this to true only once TLS is genuinely terminated somewhere
+   * in front (Caddy/nginx/Traefik) and this process's own HTTP is unreachable directly.
+   */
+  tlsTerminated: process.env.TLS_TERMINATED === "true",
+
   /** 32-byte hex key used for AES-256-GCM encryption of session data at rest. */
   encryptionKey: requireEnv("APP_ENCRYPTION_KEY", () => devEncryptionKey),
   /** Secret used to sign the session-id cookie. */

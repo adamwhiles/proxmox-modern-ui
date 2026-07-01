@@ -19,9 +19,15 @@ export default fp(async function securityPlugin(fastify: FastifyInstance) {
         frameAncestors: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],
+        // helmet's defaults (merged in via useDefaults, which we don't disable) include
+        // upgrade-insecure-requests unconditionally. That silently rewrites every http:// asset
+        // request the browser makes to https:// — fine once a reverse proxy actually terminates
+        // TLS, but fatal without one (every script/style fetch fails with no TLS listener to
+        // answer). Explicitly clear it until tlsTerminated is true.
+        ...(config.tlsTerminated ? {} : { upgradeInsecureRequests: null }),
       },
     },
-    hsts: config.isProduction ? { maxAge: 15552000, includeSubDomains: true } : false,
+    hsts: config.tlsTerminated ? { maxAge: 15552000, includeSubDomains: true } : false,
     crossOriginEmbedderPolicy: false, // noVNC/xterm.js websockets don't need COEP
   });
 

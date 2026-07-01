@@ -144,8 +144,12 @@ Once you've registered it and logged in as an `APP_ADMIN_USERS` user, remove `SE
 
 ## 8. TLS / reverse proxy (recommended before exposing beyond your LAN)
 
-The app itself speaks plain HTTP and expects TLS termination in front of it (per the security
-design — see the security spine notes in the repo). Put Caddy, nginx, or Traefik in front:
+The app itself always speaks plain HTTP — it never terminates TLS on its own. By default
+(`TLS_TERMINATED=false`, or unset), it runs correctly over plain HTTP: session cookies aren't
+`Secure`-flagged and the CSP won't force-upgrade asset requests to HTTPS, so a bare
+`http://<container-ip>:3000` deployment works fine for LAN-only use.
+
+Once you put a real TLS-terminating reverse proxy in front (Caddy, nginx, Traefik):
 
 ```
 # Caddy example (/etc/caddy/Caddyfile)
@@ -154,10 +158,10 @@ proxmox-ui.yourlan.example {
 }
 ```
 
-For pure LAN use, plain HTTP to the container is fine short-term, but session cookies are marked
-`Secure` in production, meaning **login will silently fail over plain HTTP** unless you terminate
-TLS somewhere in front (even a self-signed cert via Caddy's internal CA works). Don't skip this
-step.
+...set `TLS_TERMINATED=true` in `.env` and restart the service. This is what turns on `Secure`
+cookies, HSTS, and CSP's `upgrade-insecure-requests` — all of which are *wrong* to enable before
+TLS actually exists end-to-end (they'll break login and asset loading, not just weaken security),
+which is why it's a separate flag from `NODE_ENV=production` rather than implied by it.
 
 ## Updating later
 
