@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import https from "node:https";
-import { X509Certificate, createHash, randomBytes } from "node:crypto";
+import { X509Certificate, createHash, createCipheriv, randomBytes } from "node:crypto";
 import selfsigned from "selfsigned";
 import { WebSocketServer } from "ws";
 
@@ -360,20 +360,48 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    if (info.kind === "vnc") handleVncSocket(ws);
-    else handleShellSocket(ws);
+    if (info.kind === "vnc") handleVncSocket(ws, url.searchParams.get("vncticket"));
+    else handleShellSocket(ws, url.searchParams.get("vncticket"));
   });
 });
+
+/** Classic VNC Authentication (RFB security type 2) uses each password byte with its bits
+ * reversed as a DES-ECB key — a quirk inherited from the original RealVNC implementation. Real
+ * Proxmox VNC displays require this (using the vncproxy ticket as the password), so the mock
+ * implements it for real rather than accepting "None", to actually prove the frontend's
+ * credential-passing (see VncConsole.tsx) works against real VNC auth, not just skip it. */
+function reverseBits(byte) {
+  let out = 0;
+  for (let i = 0; i < 8; i++) out = (out << 1) | ((byte >> i) & 1);
+  return out;
+}
+function vncAuthKey(password) {
+  const key = Buffer.alloc(8);
+  const pw = Buffer.from(password, "utf8");
+  for (let i = 0; i < 8; i++) key[i] = reverseBits(i < pw.length ? pw[i] : 0);
+  return key;
+}
+function vncAuthResponse(challenge, password) {
+  // Node's default OpenSSL 3 provider doesn't expose single-DES ("des-ecb") — only 3DES variants.
+  // 3DES-ECB with all three sub-keys equal to the same 8-byte key is mathematically identical to
+  // single DES (the decrypt-with-K2 step cancels the preceding encrypt-with-K1 when K1 == K2), so
+  // this produces the exact same result a real single-DES VNC-Auth implementation would.
+  const key8 = vncAuthKey(password);
+  const cipher = createCipheriv("des-ede3-ecb", Buffer.concat([key8, key8, key8]), null);
+  cipher.setAutoPadding(false);
+  return Buffer.concat([cipher.update(challenge), cipher.final()]);
+}
 
 /** Minimal RFB 3.8 server handshake (security type "None") + a solid animated framebuffer, just
  * enough for noVNC's RFB client to reach "connected" and paint something — proves the websocket
  * relay end to end without needing a real VNC server. */
-function handleVncSocket(ws) {
+function handleVncSocket(ws, expectedPassword) {
   const width = 640;
   const height = 480;
   let stage = "version";
   let buf = Buffer.alloc(0);
   let frame = 0;
+  let challenge = null;
 
   ws.send(Buffer.from("RFB 003.008\n", "ascii"));
 
@@ -387,13 +415,28 @@ function handleVncSocket(ws) {
     if (stage === "version") {
       if (buf.length < 12) return false;
       buf = buf.subarray(12);
-      ws.send(Buffer.from([1, 1])); // 1 security type offered: 1 = None
+      ws.send(Buffer.from([1, 2])); // 1 security type offered: 2 = VNC Authentication
       stage = "security-select";
       return true;
     }
     if (stage === "security-select") {
       if (buf.length < 1) return false;
       buf = buf.subarray(1);
+      challenge = randomBytes(16);
+      ws.send(challenge);
+      stage = "security-response";
+      return true;
+    }
+    if (stage === "security-response") {
+      if (buf.length < 16) return false;
+      const response = buf.subarray(0, 16);
+      buf = buf.subarray(16);
+      const expected = vncAuthResponse(challenge, expectedPassword);
+      if (!response.equals(expected)) {
+        ws.send(Buffer.from([0, 0, 0, 1])); // SecurityResult: failed
+        ws.close(1008, "VNC authentication failed");
+        return false;
+      }
       ws.send(Buffer.from([0, 0, 0, 0])); // SecurityResult: OK
       stage = "client-init";
       return true;
@@ -480,15 +523,77 @@ function handleVncSocket(ws) {
 }
 
 /** Fake interactive shell — echoes keystrokes and answers a handful of canned commands, enough to
- * prove the termproxy + websocket relay renders correctly in xterm.js. */
-function handleShellSocket(ws) {
+ * prove the termproxy + websocket relay renders correctly in xterm.js. Parses Proxmox's real
+ * termproxy wire format for client->server bytes (0:LEN:MSG data, 1:COLS:ROWS: resize, 2 ping) —
+ * see https://github.com/proxmox/pve-xtermjs — server->client stays raw/unwrapped per that spec. */
+function handleShellSocket(ws, expectedTicket) {
   const send = (s) => ws.send(Buffer.from(s, "utf8"));
   const prompt = "root@pve-node1:~# ";
-  send(`Welcome to the mock Proxmox shell console.\r\nType a command and press Enter.\r\n\r\n${prompt}`);
   let line = "";
+  let recvBuf = "";
+  // Real termproxy requires "user@realm:ticket\n" as the very first message before anything else —
+  // this is the exact handshake the relay was silently skipping (it only passed the ticket as a
+  // vncwebsocket query param, which pveproxy uses to find/bridge to termproxy, but termproxy itself
+  // separately reads a ticket line off the bridged connection and times out after 10s without it).
+  // Mirroring that requirement here, instead of accepting input immediately, is what would have
+  // caught this bug in mock-based testing.
+  let authenticated = false;
 
-  ws.on("message", (data) => {
-    for (const ch of Buffer.from(data).toString("utf8")) {
+  ws.on("message", (data, isBinary) => {
+    // Real termproxy's line protocol is meaningless over a binary frame — surface it loudly here
+    // instead of silently accepting it, since a text-vs-binary frame mismatch in the relay is
+    // exactly the kind of bug that stays invisible if the mock doesn't care about frame type.
+    if (isBinary) {
+      console.log("WARNING: shell socket received a BINARY frame — real termproxy would likely ignore this:", data.toString("hex").slice(0, 40));
+      return;
+    }
+    if (!authenticated) {
+      const authLine = Buffer.from(data).toString("utf8");
+      const match = authLine.match(/^([^:]+):(.+)\n$/);
+      if (!match || match[2] !== expectedTicket) {
+        console.log("WARNING: termproxy auth line missing/incorrect — real termproxy would time out after 10s:", JSON.stringify(authLine));
+        return; // real termproxy just never sends OK and eventually gives up; mimic that instead of closing
+      }
+      authenticated = true;
+      send("OK");
+      send(`Welcome to the mock Proxmox shell console.\r\nType a command and press Enter.\r\n\r\n${prompt}`);
+      return;
+    }
+    recvBuf += Buffer.from(data).toString("utf8");
+    let progressed = true;
+    while (progressed) progressed = pumpFrame();
+  });
+
+  function pumpFrame() {
+    if (recvBuf.length === 0) return false;
+    if (recvBuf[0] === "2") {
+      recvBuf = recvBuf.slice(1);
+      return true; // ping — no reply needed
+    }
+    if (recvBuf[0] === "1") {
+      const match = recvBuf.match(/^1:(\d+):(\d+):/);
+      if (!match) return false;
+      recvBuf = recvBuf.slice(match[0].length);
+      return true; // resize — mock doesn't need to react to it
+    }
+    if (recvBuf[0] === "0") {
+      const header = recvBuf.match(/^0:(\d+):/);
+      if (!header) return false;
+      const len = Number(header[1]);
+      const rest = recvBuf.slice(header[0].length);
+      if (Buffer.byteLength(rest, "utf8") < len) return false; // wait for the rest of the message
+      const msg = rest.slice(0, len);
+      recvBuf = rest.slice(len);
+      handleInput(msg);
+      return true;
+    }
+    // Anything else is silently ignored per the real protocol, but drop it so we don't spin forever.
+    recvBuf = "";
+    return false;
+  }
+
+  function handleInput(text) {
+    for (const ch of text) {
       if (ch === "\r" || ch === "\n") {
         send("\r\n");
         runCommand(line.trim());
@@ -503,7 +608,7 @@ function handleShellSocket(ws) {
         send(ch);
       }
     }
-  });
+  }
 
   function runCommand(cmd) {
     switch (cmd) {

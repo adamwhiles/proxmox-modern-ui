@@ -20,6 +20,10 @@ function buildConsoleUrl(clusterId: string, node: string, type: GuestType, vmid:
   return `${protocol}://${window.location.host}/api/clusters/${clusterId}/nodes/${node}/${type}/${vmid}/console/${kind}`;
 }
 
+function buildVncTicketUrl(clusterId: string, node: string, type: GuestType, vmid: string) {
+  return `/clusters/${clusterId}/nodes/${node}/${type}/${vmid}/console/vnc-ticket`;
+}
+
 export function GuestDetailPage() {
   const { clusterId, node, type, vmid } = useParams<{ clusterId: string; node: string; type: GuestType; vmid: string }>();
   const queryClient = useQueryClient();
@@ -89,7 +93,10 @@ export function GuestDetailPage() {
                 </TabsList>
                 {type === "qemu" && (
                   <TabsContent value="vnc">
-                    <VncConsole wsUrl={buildConsoleUrl(clusterId, node, type as GuestType, vmid, "vnc")} />
+                    <VncConsole
+                      wsUrl={buildConsoleUrl(clusterId, node, type as GuestType, vmid, "vnc")}
+                      ticketUrl={buildVncTicketUrl(clusterId, node, type as GuestType, vmid)}
+                    />
                   </TabsContent>
                 )}
                 <TabsContent value="shell">

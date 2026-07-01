@@ -1,0 +1,22 @@
+[Unit]
+Description=Proxmox Modern UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=proxmox-ui
+WorkingDirectory=/opt/proxmox-ui/apps/server
+EnvironmentFile=/opt/proxmox-ui/apps/server/.env
+# corepack's pnpm shim location varies by install method — resolve it via a login shell rather
+# than hardcoding a path (e.g. /usr/bin/pnpm may not exist even though `pnpm` works interactively).
+ExecStart=/bin/bash -lc 'exec pnpm start'
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/proxmox-ui/apps/server/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

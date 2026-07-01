@@ -161,4 +161,8 @@ export class ProxmoxClient {
       vncTicket,
     );
   };
+  buildConsoleReferer = (node: string, type: "qemu" | "lxc", vmid: number, mode: "xtermjs" | "novnc") => {
+    const url = new URL(this.http.baseUrl.replace("/api2/json", ""));
+    return consoleApi.buildConsoleReferer(url.hostname, Number(url.port || 8006), type, node, vmid, mode);
+  };
 }

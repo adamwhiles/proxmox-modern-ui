@@ -93,7 +93,7 @@ export class ProxmoxHttpClient {
     return this.login(username, this.ticket.ticket, realm);
   }
 
-  async request<T>(method: string, path: string, params?: Params): Promise<T> {
+  async request<T>(method: string, path: string, params?: Params, extraHeaders?: Record<string, string>): Promise<T> {
     if (!this.ticket) throw new ProxmoxAuthError("Not authenticated");
     const isMutating = method !== "GET";
     const query = !isMutating && params ? `?${toFormBody(params)}` : "";
@@ -106,6 +106,7 @@ export class ProxmoxHttpClient {
         cookie: `PVEAuthCookie=${this.ticket.ticket}`,
         ...(isMutating ? { "CSRFPreventionToken": this.ticket.csrfToken } : {}),
         ...(body ? { "content-type": "application/x-www-form-urlencoded" } : {}),
+        ...extraHeaders,
       },
       body,
     });
@@ -127,8 +128,8 @@ export class ProxmoxHttpClient {
   get<T>(path: string, params?: Params): Promise<T> {
     return this.request<T>("GET", path, params);
   }
-  post<T>(path: string, params?: Params): Promise<T> {
-    return this.request<T>("POST", path, params);
+  post<T>(path: string, params?: Params, extraHeaders?: Record<string, string>): Promise<T> {
+    return this.request<T>("POST", path, params, extraHeaders);
   }
   put<T>(path: string, params?: Params): Promise<T> {
     return this.request<T>("PUT", path, params);
