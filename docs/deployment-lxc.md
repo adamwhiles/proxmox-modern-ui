@@ -5,14 +5,20 @@ required, which keeps things simpler and avoids the AppArmor/nesting quirks of D
 
 ## 1. Create the container
 
-Debian 12 or Ubuntu 24.04, unprivileged, 1 vCPU / 512MB-1GB RAM / 4GB disk is plenty. Give it a
-static IP or DHCP reservation so the systemd unit and any reverse proxy config stay stable.
+Debian 12 or Ubuntu 24.04, unprivileged, 1-2 vCPU / 2GB RAM / 4GB disk for the build step. The
+running app itself is light (well under 512MB), but `pnpm install` (native-compiles
+`better-sqlite3` via node-gyp/g++) and the Vite/Rollup production build both want real memory
+headroom — 512MB is enough to cause severe thrashing or OOM kills during the build, which can look
+like a network/download problem rather than a memory one. Scale the container back down to
+512MB-1GB after the build if you want a leaner steady-state footprint (`pct set <vmid> --memory
+768`), or just leave it at 2GB.
 
 ```
 pct create <vmid> local:vztmpl/debian-12-standard_*.tar.zst \
   --hostname proxmox-ui \
   --net0 name=eth0,bridge=vmbr0,ip=dhcp \
   --rootfs local-lvm:4 \
+  --memory 2048 \
   --unprivileged 1 \
   --features nesting=0
 pct start <vmid>
